@@ -1,0 +1,28 @@
+# dataset
+data/
+datasets/
+*.nii
+*.dcm
+*.npy
+*.npz
+
+# checkpoints
+checkpoints/
+weights/
+*.pth
+*.h5
+*.ckpt
+
+# logs
+logs/
+wandb/
+
+# python
+__pycache__/
+*.pyc
+
+# vscode
+.vscode/
+
+# jupyter
+.ipynb_checkpoints/
