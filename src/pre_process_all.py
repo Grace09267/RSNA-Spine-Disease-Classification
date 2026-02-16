@@ -7,13 +7,17 @@ import pydicom
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import cv2
-from model import SimpleRegNet, flow_sample, prepare_image_tensor, warp, resize_image_and_coords
+from registration_model import SimpleRegNet, flow_sample, prepare_image_tensor, warp, resize_image_and_coords
+import yaml
+
+with open("configs.yaml") as f:
+    cfg = yaml.safe_load(f)
 
 # --------------------------------------
 # 1. Load Meta Data
 # --------------------------------------
-label_df = pd.read_csv("rsna_2024_spine/train_label_coordinates.csv")
-desc_df = pd.read_csv("rsna_2024_spine/train_series_descriptions.csv")
+label_df = pd.read_csv(cfg["data"]["train_label_csv"])
+desc_df = pd.read_csv(cfg["data"]["train_desc_csv"])
 
 # --------------------------------------
 # 2. Anchor 후보 추출
@@ -25,7 +29,8 @@ def extract_valid_anchors(desc_df, label_df):
 # --------------------------------------
 # 3. DICOM 존재 확인
 # --------------------------------------
-def check_dicom_exists(df, base_path="rsna_2024_spine/train_images"):
+def check_dicom_exists(df):
+    base_path = cfg["data"]["train_images_root"]
     valids = []
     for _, row in df.iterrows():
         path = os.path.join(base_path, str(row.study_id), str(row.series_id))
@@ -36,21 +41,27 @@ def check_dicom_exists(df, base_path="rsna_2024_spine/train_images"):
 # --------------------------------------
 # 4. 슬라이스 불러오기
 # --------------------------------------
-def load_slices(study_id, series_id, base_path="rsna_2024_spine/train_images"):
+def load_slices(study_id, series_id):
+    base_path = cfg["data"]["train_images_root"]
     dcm_dir = os.path.join(base_path, str(study_id), str(series_id))
     files = sorted([f for f in os.listdir(dcm_dir) if f.endswith(".dcm")])
     slices = []
     for f in files:
         path = os.path.join(dcm_dir, f)
-        dcm = pydicom.dcmread(path)
+        dcm = pydicom.dcmread(path, force=True)
         inst = int(dcm.InstanceNumber)
         slices.append((inst, dcm.pixel_array))
     return sorted(slices, key=lambda x: x[0])
 
 # --------------------------------------
 # 5. Hybrid Registration + Cycle Check
+# 1) Anchor 좌표 기준
+# 2) Forward flow 계산
+# 3) Cycle consistency 체크
+# 4) 실패 시 registration 재학습
+# 5) Heatmap 저장
 # --------------------------------------
-def train_hybrid_registration(anchor_img, target_img, coords, model, steps=300, lam=1.0):
+def train_hybrid_registration(anchor_img, target_img, coords, model, steps = cfg["preprocess"]["registration_steps"], lam=1.0):
     model.train()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     anchor_tensor = prepare_image_tensor(anchor_img)
@@ -85,10 +96,15 @@ def save_heatmap(image, coords, save_path_png, save_path_npy):
 # --------------------------------------
 # 6. 전체 전파 루프
 # --------------------------------------
-def propagate_labels(study_id, series_id, anchor_instance, coords, model, slices, threshold=0.2, heatmap_dir="heatmaps"):
+def propagate_labels(study_id, series_id, anchor_instance, coords, model, slices, threshold = cfg["preprocess"]["cycle_threshold"], heatmap_dir=cfg["output"]["heatmaps_dir"]):
     results = []
     anchor_img = [img for inst, img in slices if inst == anchor_instance][0]
-    anchor_img, coords_resized = resize_image_and_coords(anchor_img, coords.cpu().numpy(), size=(512, 512))
+    anchor_img, coords_resized = resize_image_and_coords(
+        anchor_img, 
+        coords.cpu().numpy(), 
+        resize_size = tuple(cfg["preprocess"]["resize"])
+    )
+    model.eval()
     anchor_tensor = prepare_image_tensor(anchor_img)
     coords = torch.tensor(coords_resized, dtype=torch.float32).cuda()
     os.makedirs(heatmap_dir, exist_ok=True)
@@ -96,7 +112,7 @@ def propagate_labels(study_id, series_id, anchor_instance, coords, model, slices
     for inst_num, target_img in slices:
         if inst_num == anchor_instance:
             continue
-        target_img_resized, _ = resize_image_and_coords(target_img, coords_resized, size=(512, 512))
+        target_img_resized, _ = resize_image_and_coords(target_img, coords_resized, resize_size = tuple(cfg["preprocess"]["resize"]))
         target_tensor = prepare_image_tensor(target_img_resized)
 
         flow_ab = model(anchor_tensor, target_tensor)
@@ -138,6 +154,7 @@ def run_propagation():
     valid_anchors = check_dicom_exists(anchors)
     model = SimpleRegNet().cuda()
 
+    # for i, row in tqdm(valid_anchors.head(3).iterrows(), total=3):
     for i, row in tqdm(valid_anchors.iterrows(), total=len(valid_anchors)):
         try:
             slices = load_slices(row.study_id, row.series_id)
@@ -151,8 +168,10 @@ def run_propagation():
         except Exception as e:
             failed_cases.append({"study_id": row.study_id, "series_id": row.series_id, "error": str(e)})
 
-    pd.DataFrame(all_results).to_csv("propagated_labels.csv", index=False)
-    pd.DataFrame(failed_cases).to_csv("failed_cases.csv", index=False)
+    os.makedirs(os.path.dirname(cfg["output"]["propagated_csv"]), exist_ok=True)
+    os.makedirs(os.path.dirname(cfg["output"]["failed_csv"]), exist_ok=True)
+    pd.DataFrame(all_results).to_csv(cfg["output"]["propagated_csv"], index=False)
+    pd.DataFrame(failed_cases).to_csv(cfg["output"]["failed_csv"], index=False)
     print(f"총 실패 케이스: {len(failed_cases)}")
 
 # 실행
@@ -160,7 +179,7 @@ run_propagation()
 
 # 전처리 결과 시각화 예시 함수
 
-def visualize_random_heatmap(n=5, heatmap_dir="heatmaps"):
+def visualize_random_heatmap(n=5, heatmap_dir=cfg["output"]["heatmaps_dir"]):
     import random
     npy_files = [f for f in os.listdir(heatmap_dir) if f.endswith(".npy")]
     sampled = random.sample(npy_files, n)
@@ -171,3 +190,6 @@ def visualize_random_heatmap(n=5, heatmap_dir="heatmaps"):
         plt.title(file)
         plt.colorbar()
         plt.show()
+
+if __name__ == "__main__":
+    run_propagation()

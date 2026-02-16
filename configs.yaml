@@ -1,0 +1,26 @@
+
+
+data:
+  train_images_root: /mnt/c/Users/lhe09/projects/rsna2024_spine/Data/train_images
+  train_csv: /mnt/c/Users/lhe09/projects/rsna2024_spine/Data/train.csv
+  train_label_csv: /mnt/c/Users/lhe09/projects/rsna2024_spine/Data/train_label_coordinates.csv
+  train_desc_csv: /mnt/c/Users/lhe09/projects/rsna2024_spine/Data/train_series_descriptions.csv
+
+
+output:
+  heatmaps_dir: /mnt/c/Users/lhe09/projects/rsna2024_spine/heatmaps
+  propagated_csv: /home/lhe09/projects/rsna_spine/outputs/labels/propagated_labels.csv
+  failed_csv: /home/lhe09/projects/rsna_spine/outputs/analysis/failed_cases.csv
+  masks_dir: /mnt/c/Users/lhe09/projects/rsna2024_spine/masks
+  coords_dir: /mnt/c/Users/lhe09/projects/rsna2024_spine/coords
+
+preprocess:
+  resize: [512, 512]
+  registration_steps: 300
+  cycle_threshold: 0.2
+
+
+train:
+  batch_size: 8
+  lr: 0.0001
+  epoch: 50
