@@ -57,3 +57,8 @@ Image features
 Heatmap features
 Segmentation features
 Coordinate-based spatial attention
+
+📌 Progress
+1.pre_process_all.py
+
+
