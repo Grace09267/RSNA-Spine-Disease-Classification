@@ -1,13 +1,8 @@
-# model.py
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision
 import cv2
 import numpy as np
-import os
-import pandas as pd
 
 # --------------------------
 # SimpleRegNet: CNN 기반 Registration 모델
@@ -31,6 +26,8 @@ class SimpleRegNet(nn.Module):
         )
 
     def forward(self, source, target):
+        source = source.contiguous()
+        target = target.contiguous()
         x = torch.cat([source, target], dim=1)  # (B, 2, H, W)
         x = self.encoder(x)
         flow = self.decoder(x)
@@ -55,15 +52,29 @@ def flow_sample(flow, coords):
 # --------------------------
 # warp: flow를 이용해 이미지를 변형 (warping)
 # --------------------------
+_grid_cache = {}
 def warp(image, flow):
     B, C, H, W = image.shape
+    device = image.device
+    key = (H, W, device)
+    if key not in _grid_cache:
+        grid_y, grid_x = torch.meshgrid(
+            torch.arange(H, device=device),
+            torch.arange(W, device=device),
+            indexing='ij'
+        )
+        # grid shape=(H, W, 2)
+        grid = torch.stack((grid_x, grid_y), 2).float()
+        _grid_cache[key] = grid
 
-    grid_y, grid_x = torch.meshgrid(
-        torch.arange(0, H, device=image.device),
-        torch.arange(0, W, device=image.device), indexing='ij')
-    grid = torch.stack((grid_x, grid_y), 2).float()
-    grid = grid.unsqueeze(0) # (1, H, W, 2)
+#    grid_y, grid_x = torch.meshgrid(
+#        torch.arange(0, H, device=image.device),
+#        torch.arange(0, W, device=image.device), indexing='ij')
+#    grid = torch.stack((grid_x, grid_y), 2).float()
+#    grid = grid.unsqueeze(0) # (1, H, W, 2)
     
+    grid = _grid_cache[key] # (H, W, 2)
+
     # flow 보간 (anchor와 동일 크기로 맞춤)
     flow = F.interpolate(flow, size=(H, W), mode='bilinear', align_corners=True)
     
@@ -76,11 +87,35 @@ def warp(image, flow):
 
 # --------------------------
 # prepare_image_tensor: numpy 이미지를 (1, 1, H, W) 텐서로 변환 후 GPU에 업로드
-# --------------------------
-def prepare_image_tensor(np_image, device="cuda"):
-    norm = (np_image - np_image.min()) / (np_image.max() - np_image.min() + 1e-8)
-    tensor = torch.tensor(norm, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+# --------------------------425개의 실패 케이스가 생김(압축건의 문제?로 5D이 생겨서 4D로 바뀌기 위해 아래 코드로 수정)
+# def prepare_image_tensor(np_image, device="cuda"):
+#     norm = (np_image - np_image.min()) / (np_image.max() - np_image.min() + 1e-8)
+#     tensor = torch.tensor(norm, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+#     return tensor.to(device)
+def prepare_image_tensor(image, device="cuda"):
+    image = np.array(image, dtype=np.float32)
+    # ✅ squeeze unexpected dims
+    image = np.squeeze(image)
+#    # normalize
+#    image = (image - image.min()) / (image.max() - image.min() + 1e-6)
+#    tensor = torch.from_numpy(image)
+
+    # 반드시 2D 보장
+    if image.ndim != 2:
+        raise ValueError(f"Image must be 2D after squeeze, got {image.shape}")
+#    tensor = tensor.unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
+    
+    # robust normalization(percentile로 구조유지하기 위하여)
+    p1, p99 = np.percentile(image, (1, 99))
+    if abs(p99 - p1) < 1e-6:
+        image = np.zeros_like(image, dtype=np.float32)
+    else:
+        image = np.clip(image, p1, p99)
+        image = (image -p1) / (p99 - p1)
+    tensor = torch.from_numpy(image).float().unsqueeze(0).unsqueeze(0)
     return tensor.to(device)
+#    return tensor.cuda()
+
 
 # source와 target의 이미지 크기를 맞추기 위해, 좌표와 이미지 모두 resize 진행함함
 def resize_image_and_coords(image, coords, resize_size):

@@ -8,16 +8,13 @@ data:
 
 
 output:
-  heatmaps_dir: /mnt/c/Users/lhe09/projects/rsna2024_spine/heatmaps
   propagated_csv: /home/lhe09/projects/rsna_spine/outputs/labels/propagated_labels.csv
   failed_csv: /home/lhe09/projects/rsna_spine/outputs/analysis/failed_cases.csv
-  masks_dir: /mnt/c/Users/lhe09/projects/rsna2024_spine/masks
-  coords_dir: /mnt/c/Users/lhe09/projects/rsna2024_spine/coords
-
+  roi_dataset_dir: /home/lhe09/projects/rsna_spine/outputs/roi_dataset
 preprocess:
   resize: [512, 512]
   registration_steps: 300
-  cycle_threshold: 0.2
+  cycle_threshold: 5.0
 
 
 train:
