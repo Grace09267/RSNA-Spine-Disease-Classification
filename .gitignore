@@ -30,4 +30,4 @@ __pycache__/
 # outputs
 *.npy
 *.png
-*.csv
+*.csvoutputs/labels/*.csv
